@@ -10,6 +10,16 @@ import io
 from PIL import Image
 import numpy as np
 
+# ============ YOUR SUPABASE CREDENTIALS ============
+SUPABASE_URL = "https://uhskvktshxojggmfcqtd.supabase.co"
+SUPABASE_KEY = "sb_publishable_ArKrKiXzj4Wq04-9N-dMBA_iug1h2hm"
+
+def get_supabase():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def hash_password(pwd):
+    return hashlib.sha256(pwd.encode()).hexdigest()
+
 # ============ MULTI-LANGUAGE SUPPORT ============
 LANGUAGES = {
     "English": "en",
@@ -181,16 +191,6 @@ TEXTS = {
         "improvement": "改进"
     }
 }
-
-# ============ SUPABASE SETUP ============
-SUPABASE_URL = "https://hkazarirzooypbkmqhzc.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhrYXphcmlyem9veXBia21xaHpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNTAyMjcsImV4cCI6MjA5MDcyNjIyN30.Ms2ZgBOUL9G3LDUC14dGFi32zHIlhwhrk2vP6M6AYzw"
-
-def get_supabase():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
-def hash_password(pwd):
-    return hashlib.sha256(pwd.encode()).hexdigest()
 
 # ============ APP CONFIGURATION ============
 st.set_page_config(page_title="MedBalance Pro", layout="wide")
