@@ -1,4 +1,4 @@
-# MedBalance Pro - Professional Medical AI Platform
+# MedBalance Pro - Fixed Signup Error Version
 import streamlit as st
 import hashlib
 import datetime
@@ -242,7 +242,7 @@ if 'user_id' not in st.session_state:
 st.title(t["title"])
 st.markdown(f"### {t['subtitle']}")
 
-# ============ LOGIN / SIGNUP ============
+# ============ LOGIN / SIGNUP (FIXED VERSION) ============
 if not st.session_state.logged_in:
     col1, col2 = st.columns(2)
     
@@ -270,17 +270,32 @@ if not st.session_state.logged_in:
         new_email = st.text_input(t["email"], key="new_email")
         
         if st.button(t["create_account"], key="signup_btn"):
-            supabase = get_supabase()
-            hashed = hash_password(new_pass)
-            try:
-                supabase.table("users").insert({
-                    "username": new_user,
-                    "password": hashed,
-                    "email": new_email
-                }).execute()
-                st.success(t["success"])
-            except:
-                st.error(t["exists"])
+            if not new_user or not new_pass or not new_email:
+                st.warning("Please fill all fields")
+            else:
+                supabase = get_supabase()
+                hashed = hash_password(new_pass)
+                
+                # First check if user already exists
+                try:
+                    existing = supabase.table("users").select("username").eq("username", new_user).execute()
+                    if existing.data:
+                        st.error(t["exists"])
+                    else:
+                        # Attempt to insert
+                        result = supabase.table("users").insert({
+                            "username": new_user,
+                            "password": hashed,
+                            "email": new_email
+                        }).execute()
+                        st.success(t["success"])
+                except Exception as e:
+                    # Show the actual error for debugging
+                    error_msg = str(e)
+                    if "duplicate key" in error_msg.lower():
+                        st.error(t["exists"])
+                    else:
+                        st.error(f"Database error: {error_msg}")
 
 # ============ MAIN APP ============
 else:
