@@ -87,11 +87,18 @@ def process_zip(zip_file):
         with zipfile.ZipFile(zip_file, 'r') as zf:
             zf.extractall(tmpdir)
         
-        # Check for labelled subfolders
-        normal_path = os.path.join(tmpdir, 'normal')
-        pneumonia_path = os.path.join(tmpdir, 'pneumonia')
-        if os.path.isdir(normal_path) and os.path.isdir(pneumonia_path):
-            has_labels = True
+     # Check for labelled subfolders (case-insensitive)
+normal_path = None
+pneumonia_path = None
+
+for item in os.listdir(tmpdir):
+    if item.lower() == 'normal':
+        normal_path = os.path.join(tmpdir, item)
+    elif item.lower() == 'pneumonia':
+        pneumonia_path = os.path.join(tmpdir, item)
+
+if normal_path and pneumonia_path and os.path.isdir(normal_path) and os.path.isdir(pneumonia_path):
+    has_labels = True
         
         # Scan all images
         for root, dirs, files in os.walk(tmpdir):
