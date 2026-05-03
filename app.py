@@ -1,4 +1,4 @@
-# MedBalance Pro - Full Version with Dynamic Accuracy
+# MedBalance Pro - Final Version with Dynamic Accuracy & History
 import streamlit as st
 import hashlib
 import pandas as pd
@@ -52,7 +52,7 @@ def load_model():
         model.eval()
         return model, device
     else:
-        st.warning("⚠️ Model file not found. Using random predictions for demo.")
+        st.warning("⚠️ Model file 'medbalance_model.pth' not found. Using random predictions for demo.")
         return None, device
 
 model, device = load_model()
@@ -73,8 +73,8 @@ def predict_image(image):
         _, predicted = torch.max(output, 1)
     return predicted.item()
 
-def process_zip(zip_file):
-    """Returns: normal_count, pneumonia_count, normal_accuracy, pneumonia_accuracy"""
+def process_zip(zip_file, user_id=None):
+    """Returns: normal_count, pneumonia_count, normal_accuracy, pneumonia_accuracy, total_normal, total_pneumonia"""
     normal_count = 0
     pneumonia_count = 0
     correct_normal = 0
@@ -87,18 +87,16 @@ def process_zip(zip_file):
         with zipfile.ZipFile(zip_file, 'r') as zf:
             zf.extractall(tmpdir)
         
-     # Check for labelled subfolders (case-insensitive)
-normal_path = None
-pneumonia_path = None
-
-for item in os.listdir(tmpdir):
-    if item.lower() == 'normal':
-        normal_path = os.path.join(tmpdir, item)
-    elif item.lower() == 'pneumonia':
-        pneumonia_path = os.path.join(tmpdir, item)
-
-if normal_path and pneumonia_path and os.path.isdir(normal_path) and os.path.isdir(pneumonia_path):
-    has_labels = True
+        # Case-insensitive check for normal/ pneumonia/ folders at root level
+        normal_path = None
+        pneumonia_path = None
+        for item in os.listdir(tmpdir):
+            if item.lower() == 'normal':
+                normal_path = os.path.join(tmpdir, item)
+            elif item.lower() == 'pneumonia':
+                pneumonia_path = os.path.join(tmpdir, item)
+        if normal_path and pneumonia_path and os.path.isdir(normal_path) and os.path.isdir(pneumonia_path):
+            has_labels = True
         
         # Scan all images
         for root, dirs, files in os.walk(tmpdir):
@@ -110,7 +108,8 @@ if normal_path and pneumonia_path and os.path.isdir(normal_path) and os.path.isd
                         pred = predict_image(img)  # 0=normal, 1=pneumonia
                         
                         if has_labels:
-                            folder = os.path.basename(root)
+                            # Determine true label from the folder name (case‑insensitive)
+                            folder = os.path.basename(root).lower()
                             if folder == 'normal':
                                 total_normal += 1
                                 normal_count += 1
@@ -133,22 +132,37 @@ if normal_path and pneumonia_path and os.path.isdir(normal_path) and os.path.isd
     if has_labels:
         normal_accuracy = (correct_normal / total_normal * 100) if total_normal > 0 else 0
         pneumonia_accuracy = (correct_pneumonia / total_pneumonia * 100) if total_pneumonia > 0 else 0
+        
+        # Save to history if user_id provided
+        if user_id:
+            try:
+                supabase = get_supabase()
+                supabase.table("history").insert({
+                    "user_id": user_id,
+                    "normal_count": normal_count,
+                    "pneumonia_count": pneumonia_count,
+                    "normal_accuracy": normal_accuracy,
+                    "pneumonia_accuracy": pneumonia_accuracy
+                }).execute()
+            except:
+                pass
+        
         return normal_count, pneumonia_count, normal_accuracy, pneumonia_accuracy, total_normal, total_pneumonia
     else:
         return normal_count, pneumonia_count, None, None, 0, 0
 
-# ============ MULTI-LANGUAGE TEXTS (simplified for brevity – add your full translations) ============
+# ============ MULTI-LANGUAGE TEXTS (English only for brevity – add others if needed) ============
 TEXTS = {
     "en": {
         "title": "🏥 MedBalance Pro",
         "subtitle": "Dynamic Medical Image Balancing Platform",
-        "upload_btn": "Upload ZIP file (with normal/ and pneumonia/ folders for accuracy)",
+        "upload_btn": "Upload ZIP file (with 'normal' and 'pneumonia' folders for accuracy)",
         "processing": "Analyzing images with AI model...",
         "results": "Prediction Results",
-        "normal_count": "Normal images",
-        "pneumonia_count": "Pneumonia images",
-        "normal_accuracy": "Normal detection accuracy",
-        "pneumonia_accuracy": "Pneumonia detection accuracy",
+        "normal_count": "Predicted Normal",
+        "pneumonia_count": "Predicted Pneumonia",
+        "normal_accuracy": "Normal detection ACCURACY",
+        "pneumonia_accuracy": "Pneumonia detection ACCURACY",
         "download": "Download Report",
         "login": "Login",
         "signup": "Sign Up",
@@ -159,20 +173,16 @@ TEXTS = {
         "welcome": "Welcome",
         "dashboard": "Dashboard",
         "upload_balance": "Upload & Predict",
-        "history": "History",
         "about": "About",
         "logout": "Logout",
         "invalid": "Invalid username or password",
         "exists": "Username already exists",
         "success": "Account created successfully!",
-        "model_performance": "Model Performance (from validation set)",
-        "normal_dynamic": "Dynamic Accuracy (from your upload)",
-        "pneumonia_dynamic": "Dynamic Accuracy (from your upload)",
         "how_it_works": "How It Works",
-        "step1": "1. For accuracy: upload a ZIP with 'normal' and 'pneumonia' folders",
-        "step2": "2. For predictions only: upload any ZIP of X‑ray images",
-        "step3": "3. AI model predicts each image",
-        "step4": "4. Download full report"
+        "step1": "1. For accuracy: upload a ZIP with 'normal' and 'pneumonia' folders (any case).",
+        "step2": "2. For predictions only: upload any ZIP of X‑ray images.",
+        "step3": "3. AI model predicts each image.",
+        "step4": "4. Download full report."
     }
 }
 
@@ -189,7 +199,7 @@ if 'username' not in st.session_state:
 if 'user_id' not in st.session_state:
     st.session_state.user_id = None
 
-# ============ LOGIN (simplified core) ============
+# ============ LOGIN / SIGNUP ============
 if not st.session_state.logged_in:
     col1, col2 = st.columns(2)
     with col1:
@@ -227,18 +237,13 @@ else:
     
     if menu == "Dashboard":
         st.subheader("Dashboard")
-        st.markdown("### How to use dynamic accuracy")
         st.info("""
-        **To get accuracy percentages:**
-        - Upload a ZIP containing **two subfolders**:
-          - `normal/` (put normal X‑rays here)
-          - `pneumonia/` (put pneumonia X‑rays here)
-        - The app will:
-          1. Predict each image
-          2. Compare predictions to true folder names
-          3. Show **accuracy percentages** that change based on your data
+        **How to get dynamic accuracy**  
+        - Upload a ZIP containing **two subfolders**:  
+          - `normal/` (place normal X‑rays here) – any case is accepted (Normal, NORMAL, normal)  
+          - `pneumonia/` (place pneumonia X‑rays here) – any case is accepted  
+        - The app will compute accuracy percentages that **change based on your specific images**.
         """)
-        
         st.markdown("### Static model performance (from validation set)")
         col1, col2 = st.columns(2)
         with col1:
@@ -251,13 +256,13 @@ else:
     elif menu == "Upload & Predict":
         st.subheader("Upload & Predict")
         st.write("Upload a ZIP file containing chest X‑ray images")
-        st.caption("For accuracy, include 'normal' and 'pneumonia' subfolders. Otherwise, only prediction counts will be shown.")
+        st.caption("For accuracy, include 'normal' and 'pneumonia' subfolders (any case). Otherwise, only prediction counts will be shown.")
         
         uploaded_file = st.file_uploader("Choose ZIP file", type=['zip'])
         
         if uploaded_file:
             with st.spinner("Processing images..."):
-                result = process_zip(uploaded_file)
+                result = process_zip(uploaded_file, st.session_state.user_id)
                 normal_cnt, pneumonia_cnt, normal_acc, pneumonia_acc, total_normal, total_pneumonia = result
             
             st.success("✅ Processing complete!")
@@ -266,24 +271,26 @@ else:
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Predicted Normal", normal_cnt)
-                if normal_acc is not None:
-                    st.metric("✅ Normal detection ACCURACY", f"{normal_acc:.1f}%", delta=f"on {total_normal} images")
             with col2:
                 st.metric("Predicted Pneumonia", pneumonia_cnt)
-                if pneumonia_acc is not None:
-                    st.metric("✅ Pneumonia detection ACCURACY", f"{pneumonia_acc:.1f}%", delta=f"on {total_pneumonia} images")
             
-            if normal_acc is None:
-                st.info("ℹ️ No labelled subfolders found. Showing prediction counts only. To get accuracy, include 'normal' and 'pneumonia' folders in your ZIP.")
-            else:
-                st.balloons()
+            if normal_acc is not None:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("✅ Normal detection ACCURACY", f"{normal_acc:.1f}%", delta=f"on {total_normal} images")
+                with col2:
+                    st.metric("✅ Pneumonia detection ACCURACY", f"{pneumonia_acc:.1f}%", delta=f"on {total_pneumonia} images")
                 st.success(f"🎯 Dynamic accuracy: Normal {normal_acc:.1f}% , Pneumonia {pneumonia_acc:.1f}%")
+                st.balloons()
+            else:
+                st.info("ℹ️ No labelled subfolders found. Showing prediction counts only. To get accuracy, include 'normal' and 'pneumonia' folders (any case) in your ZIP.")
             
             # Download report
             report = f"MedBalance Report - {datetime.datetime.now()}\n"
-            report += f"Normal images: {normal_cnt}\nPneumonia images: {pneumonia_cnt}\n"
+            report += f"Normal images predicted: {normal_cnt}\nPneumonia images predicted: {pneumonia_cnt}\n"
             if normal_acc is not None:
-                report += f"Normal accuracy: {normal_acc:.1f}%\nPneumonia accuracy: {pneumonia_acc:.1f}%"
+                report += f"Normal accuracy: {normal_acc:.1f}% (based on {total_normal} labelled images)\n"
+                report += f"Pneumonia accuracy: {pneumonia_acc:.1f}% (based on {total_pneumonia} labelled images)"
             else:
                 report += "No labelled data provided – accuracy not computed."
             st.download_button("📥 Download Report", report, file_name="medbalance_report.txt")
@@ -291,18 +298,18 @@ else:
     elif menu == "About":
         st.subheader("About MedBalance Pro")
         st.markdown("""
-        **Dynamic Accuracy Feature**
-        - When you upload a ZIP with 'normal' and 'pneumonia' subfolders, the app computes **real accuracy** based on your images.
-        - Accuracy percentages **change** depending on the quality and content of your uploaded data.
+        **Dynamic Accuracy Feature**  
+        - When you upload a ZIP with `normal/` and `pneumonia/` subfolders (any case), the app computes **real accuracy** based on your images.  
+        - Accuracy percentages **change** depending on the quality and content of your uploaded data.  
         
-        **Model Performance (static from validation)**
-        - Normal detection: 40%
-        - Pneumonia detection: 71%
+        **Model Performance (static from validation)**  
+        - Normal detection: 40%  
+        - Pneumonia detection: 71%  
         
-        **Technology**
-        - Custom CNN (PyTorch)
-        - Data augmentation + weighted loss
-        - Deployed on Streamlit Cloud
+        **Technology**  
+        - Custom CNN (PyTorch)  
+        - Data augmentation + weighted loss  
+        - Deployed on Streamlit Cloud  
         """)
     
     elif menu == "Logout":
