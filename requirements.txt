@@ -7,3 +7,4 @@ numpy
 torch
 torchvision
 scikit-learn
+gdown
