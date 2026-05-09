@@ -1,4 +1,4 @@
-# MedBalance Pro – with Dynamic Accuracy
+# MedBalance Pro – ResNet‑18 Model (downloaded from Google Drive)
 import streamlit as st
 import hashlib
 from supabase import create_client
@@ -6,13 +6,14 @@ import zipfile
 import os
 import torch
 import torch.nn as nn
-from torchvision import transforms
+from torchvision import transforms, models
 from PIL import Image
 import tempfile
 import datetime
 import random
+import gdown
 
-# ============ SUPABASE (your credentials) ============
+# ============ SUPABASE ============
 SUPABASE_URL = "https://uhskvktshxojggmfcqtd.supabase.co"
 SUPABASE_KEY = "sb_publishable_ArKrKiXzj4Wq04-9N-dMBA_iug1h2hm"
 
@@ -22,58 +23,42 @@ def get_supabase():
 def hash_password(pwd):
     return hashlib.sha256(pwd.encode()).hexdigest()
 
-# ============ AI MODEL ============
-class SimpleCNN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 16, 3, padding=1)
-        self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.fc1 = nn.Linear(32 * 32 * 32, 64)
-        self.fc2 = nn.Linear(64, 2)
-        self.relu = nn.ReLU()
-    def forward(self, x):
-        x = self.pool(self.relu(self.conv1(x)))
-        x = self.pool(self.relu(self.conv2(x)))
-        x = x.view(x.size(0), -1)
-        x = self.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
-
+# ============ DOWNLOAD RESNET‑18 MODEL FROM GOOGLE DRIVE ============
 @st.cache_resource
 def load_model():
     device = torch.device('cpu')
-    model = SimpleCNN().to(device)
-    model_path = 'medbalance_model.pth'
-    if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        model.eval()
-        return model, device
-    else:
-        return None, device
+    model = models.resnet18(pretrained=False)
+    model.fc = nn.Linear(512, 2)
+    model_path = 'resnet18_best.pth'
+    
+    # Download if not exists
+    if not os.path.exists(model_path):
+        with st.spinner("Downloading model from Google Drive (50 MB)... Please wait."):
+            file_id = "1zOzhGbbEdZxPa5IrKnL48kai-alkJrVY"
+            url = f"https://drive.google.com/uc?id={file_id}"
+            gdown.download(url, model_path, quiet=False)
+    
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+    return model, device
 
 model, device = load_model()
 
+# ResNet-18 expects 3-channel 224x224 images
 transform = transforms.Compose([
-    transforms.Grayscale(),
-    transforms.Resize((128, 128)),
+    transforms.Grayscale(num_output_channels=3),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
 ])
 
 def predict_image(image):
-    if model is None:
-        return random.randint(0, 1)
     img = transform(image).unsqueeze(0).to(device)
     with torch.no_grad():
         out = model(img)
         _, pred = torch.max(out, 1)
     return pred.item()
 
-# -----------------------------------------------------------------
-# NEW: Process ZIP with dynamic accuracy
-# -----------------------------------------------------------------
 def process_zip_with_accuracy(zip_file):
-    """Returns (normal_count, pneumonia_count, normal_accuracy, pneumonia_accuracy)"""
     normal_pred = 0
     pneumonia_pred = 0
     total_normal = 0
@@ -86,7 +71,6 @@ def process_zip_with_accuracy(zip_file):
         with zipfile.ZipFile(zip_file, 'r') as zf:
             zf.extractall(tmpdir)
 
-        # Check for 'normal' and 'pneumonia' folders (any case)
         normal_folder = None
         pneumonia_folder = None
         for root, dirs, files in os.walk(tmpdir):
@@ -99,28 +83,24 @@ def process_zip_with_accuracy(zip_file):
         if normal_folder and pneumonia_folder:
             has_labels = True
 
-        # Process all images
         for root, dirs, files in os.walk(tmpdir):
             for file in files:
                 if file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    img_path = os.path.join(root, file)
                     try:
-                        img = Image.open(img_path)
+                        img = Image.open(os.path.join(root, file))
                         pred = predict_image(img)
-                        # Determine true label from folder (if labelled)
                         if has_labels:
-                            if normal_folder and img_path.startswith(normal_folder):
+                            if normal_folder and os.path.join(root, file).startswith(normal_folder):
                                 total_normal += 1
                                 normal_pred += 1
                                 if pred == 0:
                                     correct_normal += 1
-                            elif pneumonia_folder and img_path.startswith(pneumonia_folder):
+                            elif pneumonia_folder and os.path.join(root, file).startswith(pneumonia_folder):
                                 total_pneumonia += 1
                                 pneumonia_pred += 1
                                 if pred == 1:
                                     correct_pneumonia += 1
                         else:
-                            # Unlabelled: just count predictions
                             if pred == 0:
                                 normal_pred += 1
                             else:
@@ -129,23 +109,23 @@ def process_zip_with_accuracy(zip_file):
                         pass
 
     if has_labels:
-        normal_accuracy = (correct_normal / total_normal * 100) if total_normal > 0 else 0
-        pneumonia_accuracy = (correct_pneumonia / total_pneumonia * 100) if total_pneumonia > 0 else 0
-        return normal_pred, pneumonia_pred, normal_accuracy, pneumonia_accuracy
+        normal_acc = (correct_normal / total_normal * 100) if total_normal > 0 else 0
+        pneumonia_acc = (correct_pneumonia / total_pneumonia * 100) if total_pneumonia > 0 else 0
+        return normal_pred, pneumonia_pred, normal_acc, pneumonia_acc
     else:
         return normal_pred, pneumonia_pred, None, None
 
 # ============ UI ============
 st.set_page_config(page_title="MedBalance Pro", layout="wide")
 st.title("🏥 MedBalance Pro")
-st.markdown("### Medical Image Balancing Platform")
+st.markdown("### Medical Image Balancing Platform (ResNet‑18 Model)")
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'username' not in st.session_state:
     st.session_state.username = None
 
-# ---------- LOGIN / SIGNUP (simple, same as before) ----------
+# ---------- LOGIN / SIGNUP ----------
 if not st.session_state.logged_in:
     col1, col2 = st.columns(2)
     with col1:
@@ -180,63 +160,50 @@ else:
     menu = st.sidebar.radio("Menu", ["Dashboard", "Upload & Predict", "About", "Logout"])
 
     if menu == "Dashboard":
-        st.subheader("Project Results (static validation)")
+        st.subheader("Model Performance (ResNet‑18)")
         st.markdown("""
         | Configuration | Normal Detection | Pneumonia Detection |
         |---------------|------------------|----------------------|
         | Baseline (no balancing) | 0% | 100% |
-        | Augmentation + Weighted Loss | 60% | 95% |
-        | + MixUp (Synthetic) | 100% | 0% (trade‑off) |
-        | **ResNet‑18 + MixUp** | **100%** | **91%** (best balance) |
+        | Custom CNN + MixUp | 100% | 0% |
+        | **ResNet‑18 + MixUp (this app)** | **100%** | **91%** |
         """)
-        st.info("These numbers are from our fixed test set. The **Upload & Predict** page can evaluate your own labelled data.")
+        st.info("Upload a ZIP with `normal` and `pneumonia` folders to test dynamic accuracy.")
 
     elif menu == "Upload & Predict":
         st.subheader("Upload & Predict (Dynamic Accuracy)")
         st.write("Upload a ZIP file containing chest X‑ray images.")
-        st.caption("For **accuracy**, include folders named `normal` and `pneumonia` (case‑insensitive). Otherwise, only prediction counts will be shown.")
-
+        st.caption("For accuracy, include folders named `normal` and `pneumonia` (case‑insensitive).")
         uploaded = st.file_uploader("Choose ZIP file", type=['zip'])
         if uploaded:
-            with st.spinner("Processing images..."):
+            with st.spinner("Processing..."):
                 norm_pred, pneum_pred, norm_acc, pneum_acc = process_zip_with_accuracy(uploaded)
-
-            st.success("Processing complete!")
+            st.success("Done!")
             col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Predicted Normal", norm_pred)
-            with col2:
-                st.metric("Predicted Pneumonia", pneum_pred)
-
+            col1.metric("Predicted Normal", norm_pred)
+            col2.metric("Predicted Pneumonia", pneum_pred)
             if norm_acc is not None:
-                st.subheader("📊 Dynamic Accuracy (based on your uploaded labels)")
+                st.subheader("📊 Dynamic Accuracy")
                 col1, col2 = st.columns(2)
-                col1.metric("Normal Detection ACCURACY", f"{norm_acc:.1f}%")
-                col2.metric("Pneumonia Detection ACCURACY", f"{pneum_acc:.1f}%")
+                col1.metric("Normal Accuracy", f"{norm_acc:.1f}%")
+                col2.metric("Pneumonia Accuracy", f"{pneum_acc:.1f}%")
                 st.balloons()
             else:
-                st.info("No labelled subfolders found. Showing prediction counts only. To get dynamic accuracy, include 'normal' and 'pneumonia' folders in your ZIP.")
-
-            # Download report
-            report = f"MedBalance Report {datetime.datetime.now()}\n"
-            report += f"Predicted Normal: {norm_pred}\nPredicted Pneumonia: {pneum_pred}\n"
+                st.info("No labelled subfolders found. Include 'normal' and 'pneumonia' folders.")
+            report = f"Report {datetime.datetime.now()}\nNormal: {norm_pred}\nPneumonia: {pneum_pred}"
             if norm_acc is not None:
-                report += f"Normal accuracy: {norm_acc:.1f}%\nPneumonia accuracy: {pneum_acc:.1f}%"
-            else:
-                report += "No labelled data – accuracy not computed."
-            st.download_button("📥 Download Report", report, file_name="medbalance_report.txt")
+                report += f"\nNormal accuracy: {norm_acc:.1f}%\nPneumonia accuracy: {pneum_acc:.1f}%"
+            st.download_button("Download Report", report, file_name="report.txt")
 
     elif menu == "About":
-        st.subheader("About")
         st.markdown("""
-        **MedBalance Pro** – A tool to improve imbalanced medical image classification.
-        - Upload a ZIP with `normal` and `pneumonia` folders to get **dynamic accuracy** (the percentages change based on your data).
-        - The dashboard shows static validation results from our experiments.
+        **Model:** ResNet‑18 trained with augmentation, weighted loss, and MixUp synthetic data.  
+        **Performance on test set:** 100% normal recall, 91% pneumonia recall.  
+        **Upload labelled data to see dynamic accuracy.**
         """)
-
     elif menu == "Logout":
         st.session_state.logged_in = False
         st.rerun()
 
 st.markdown("---")
-st.markdown("© 2025 MedBalance Pro | Dynamic Medical AI")
+st.markdown("© 2025 MedBalance Pro | ResNet‑18 Model")
